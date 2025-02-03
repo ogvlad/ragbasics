@@ -1,16 +1,15 @@
+import logging
 import os
 
 import gradio as gr
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-
-import logging
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 # Configure logging
 logging.basicConfig(
@@ -20,12 +19,29 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Global constants
+CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 200
+
+# Global objects (kept for functionality)
+vector_store = None
+
+# Initialize language model and embeddings
 llm = ChatOpenAI(model="gpt-4o-mini")
-embed_model = OpenAIEmbeddings()
+embedding = OpenAIEmbeddings()
 
 
-# File processing function
-def load_files(file_path: str):
+def load_files(file_path: str) -> str:
+    """
+    Load a PDF file from the given file path, split it into chunks,
+    and store these chunks in a global vector store (Chroma).
+
+    Args:
+        file_path (str): The path to the PDF file.
+
+    Returns:
+        str: A status message indicating the file was loaded successfully.
+    """
     global vector_store
 
     logger.info(f"Loading file: {file_path}")
@@ -33,33 +49,50 @@ def load_files(file_path: str):
     # Load the document
     document_loader = PyPDFLoader(file_path)
     documents = document_loader.load()
-    logger.info(f"Loaded {len(documents)} documents")
+    logger.info(f"Loaded {len(documents)} document(s)")
 
     # Split the document into chunks
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
+    )
     chunks = text_splitter.split_documents(documents)
-    logger.info(f"Split into {len(chunks)} chunks")
+    logger.info(f"Split into {len(chunks)} chunk(s)")
 
-    logger.info("Creating vector store")
-    # Create the vector store
-    vector_store = Chroma.from_documents(documents=chunks, embedding=OpenAIEmbeddings())
-    logger.info("Vector store created")
+    logger.info("Creating vector store...")
+    vector_store = Chroma.from_documents(documents=chunks, embedding=embedding)
+    logger.info("Vector store created successfully.")
+
+    return "File loaded successfully. You can now ask questions about the document."
 
 
-# Respond function
-def respond(message, history):
-    logger.info("Retrieving from vector store")
+def respond(message: str, history: list) -> str:
+    """
+    Generate a response based on the user query (message),
+    retrieving relevant context from the global vector store.
+
+    Args:
+        message (str): The user's query or message.
+        history (list): Chat history (unused in this code, but required by Gradio).
+
+    Returns:
+        str: The generated response.
+    """
+    if vector_store is None:
+        logger.warning("Vector store is not initialized. Please upload a PDF first.")
+        return "No document loaded. Please upload a PDF first."
+
+    logger.info("Retrieving from vector store...")
     retriever = vector_store.as_retriever()
-    logger.info("Retrieved from vector store")
+    logger.info("Retrieved from vector store.")
 
-    prompt = """
-            Answer the question in the below context:
-            {context}
-
-            Question: {question}
+    prompt_template = ChatPromptTemplate.from_template(
         """
+        Answer the question in the below context:
+        {context}
 
-    prompt_template = ChatPromptTemplate.from_template(prompt)
+        Question: {question}
+        """
+    )
 
     chain = (
         {"context": retriever, "question": RunnablePassthrough()}
@@ -68,36 +101,41 @@ def respond(message, history):
         | StrOutputParser()
     )
 
-    response = chain.invoke( message)
+    response = chain.invoke(message)
     return response
 
 
-# Clear function
 def clear_state():
-    global vector_index
-    vector_index = None
-    return [None, None, None]
+    """
+    Clear the global vector store reference and reset the UI fields.
+
+    Returns:
+        list: A list of values for resetting Gradio components.
+    """
+    global vector_store
+    vector_store = None
+    return [None, None]  # Reset file input and status textbox
 
 
-# UI Setup
+# Gradio UI Setup
 with gr.Blocks(
     theme=gr.themes.Default(
-        primary_hue="green",
-        secondary_hue="blue",
-        # font=[gr.themes.GoogleFont("Poppins")],
+        primary_hue="blue",
+        secondary_hue="gray",
     ),
-    css="footer {visibility: hidden}",
 ) as demo:
-    gr.Markdown("RAG Starter App")
+    gr.Markdown("# RAG Starter App")
     with gr.Row():
         with gr.Column(scale=1):
             file_input = gr.File(
                 file_count="single", type="filepath", label="Upload PDF Document"
             )
             with gr.Row():
-                btn = gr.Button("Submit", variant="primary")
-                clear = gr.Button("Clear")
-            output = gr.Textbox(label="Status")
+                submit_btn = gr.Button("Submit", variant="primary")
+                clear_btn = gr.Button("Clear")
+
+            status_output = gr.Textbox(label="Status")
+
         with gr.Column(scale=3):
             chatbot = gr.ChatInterface(
                 fn=respond,
@@ -111,12 +149,11 @@ with gr.Blocks(
             )
 
     # Set up Gradio interactions
-    btn.click(fn=load_files, inputs=file_input, outputs=output)
-    clear.click(
-        fn=clear_state,  # Use the clear_state function
-        outputs=[file_input, output],
+    submit_btn.click(fn=load_files, inputs=file_input, outputs=status_output)
+    clear_btn.click(
+        fn=clear_state,
+        outputs=[file_input, status_output],
     )
 
-# Launch the demo
 if __name__ == "__main__":
     demo.launch()

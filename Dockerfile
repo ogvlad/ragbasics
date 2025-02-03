@@ -1,7 +1,7 @@
 # Dockerfile
 
 # Use the official Python image with the desired version
-FROM python:3.9-slim
+FROM python:3.12-slim
 
 # Set the working directory inside the container
 WORKDIR /app
