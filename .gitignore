@@ -1,0 +1,8 @@
+# Environment variables
+.env
+
+# Streamlit files
+.streamlit
+
+# VSCode files
+.vscode
