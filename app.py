@@ -11,6 +11,13 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from chunking import Chunker
+
+from toml import load
+
+# load pyproject.toml
+with open("pyproject.toml", "r") as f:
+    config = load(f)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -78,14 +85,7 @@ def respond(message: str, history: list) -> str:
     retriever = vector_store.as_retriever()
     logger.info("Retrieved from vector store.")
 
-    prompt_template = ChatPromptTemplate.from_template(
-        """
-        Answer the question in the below context:
-        {context}
-
-        Question: {question}
-        """
-    )
+    prompt_template = ChatPromptTemplate.from_template(config["rag_prompt"]["prompt_template"])
 
     chain = (
         {"context": retriever, "question": RunnablePassthrough()}

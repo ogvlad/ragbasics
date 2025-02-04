@@ -1,6 +1,7 @@
 from toml import load
 from typing import List
 from chunking.recursive_character_text_splitter import RecursiveCharacterTextSplitterStrategy
+from chunking.markdown_splitter import MarkdownHeaderTextSplitterStrategy
 from langchain.docstore.document import Document
 
 # load pypromect.toml
@@ -14,6 +15,13 @@ class Chunker:
             self.chunking_strategy = RecursiveCharacterTextSplitterStrategy(
                 chunk_size=config["chunking"]["chunk_size"],
                 chunk_overlap=config["chunking"]["chunk_overlap"],
+            )
+
+        elif config["chunking"]["strategy"] == "markdown_splitter":
+            self.chunking_strategy = MarkdownHeaderTextSplitterStrategy(
+                headers_to_split_on=config["chunking"]["headers_to_split_on"],
+                return_each_line=config["chunking"]["return_each_line"],
+                strip_headers=config["chunking"]["strip_headers"],
             )
         else:
             raise ValueError(f"Invalid chunking strategy: {config['chunking']['strategy']}")
