@@ -10,7 +10,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-
+from chunking import Chunker
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -18,10 +18,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
-
-# Global constants
-CHUNK_SIZE = 1000
-CHUNK_OVERLAP = 200
 
 # Global objects (kept for functionality)
 vector_store = None
@@ -52,10 +48,7 @@ def load_files(file_path: str) -> str:
     logger.info(f"Loaded {len(documents)} document(s)")
 
     # Split the document into chunks
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
-    )
-    chunks = text_splitter.split_documents(documents)
+    chunks = Chunker().chunk(documents)
     logger.info(f"Split into {len(chunks)} chunk(s)")
 
     logger.info("Creating vector store...")
