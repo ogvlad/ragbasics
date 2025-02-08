@@ -74,3 +74,4 @@ __pypackages__/
 .env
 .vscode/
 /venv
+/_db

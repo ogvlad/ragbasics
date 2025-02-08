@@ -106,6 +106,7 @@ python app.py
 .
 ├── app.py              # Main application file
 ├── requirements.txt    # Python dependencies
+├── _db/               # Persistent vector store directory
 ├── core/              # Core functionality
 │   ├── __init__.py
 │   ├── document_store.py
@@ -117,6 +118,13 @@ python app.py
     ├── word_loader.py
     └── jira_loader.py
 ```
+
+## Data Persistence
+
+The application uses ChromaDB for storing document embeddings. The vector store is persistent and stored in the `_db` directory. This means:
+- Your uploaded documents and their embeddings are preserved between application restarts
+- You don't need to re-upload documents every time you start the application
+- The `Clear` button in the UI will remove all documents from the store
 
 ## Troubleshooting
 
