@@ -7,3 +7,4 @@ langchain-text-splitters
 toml
 python-docx
 docx2txt
+jira

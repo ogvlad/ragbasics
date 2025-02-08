@@ -3,16 +3,17 @@ import os
 
 import gradio as gr
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
+from langchain_core.documents import Document
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from chunking import Chunker
-
+from jira import JIRA
 from toml import load
+from langchain import LLMChain  # Corrected import
 
 # load pyproject.toml
 with open("pyproject.toml", "r") as f:
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 # Global objects (kept for functionality)
 vector_store = None
+jira_client = None
 
 # Initialize language model and embeddings
 llm = ChatOpenAI(model="gpt-4o-mini")
@@ -72,6 +74,83 @@ def load_files(file_path: str) -> str:
     logger.info("Vector store created successfully.")
 
     return "File loaded successfully. You can now ask questions about the document."
+
+
+def init_jira(server: str, username: str, api_token: str) -> str:
+    """
+    Initialize Jira client with the provided credentials.
+
+    Args:
+        server (str): Jira server URL
+        username (str): Jira username (email)
+        api_token (str): Jira API token
+
+    Returns:
+        str: Status message
+    """
+    global jira_client
+    try:
+        jira_client = JIRA(
+            server=server,
+            basic_auth=(username, api_token)
+        )
+        return "Successfully connected to Jira"
+    except Exception as e:
+        return f"Failed to connect to Jira: {str(e)}"
+
+
+def load_jira_issue(issue_key: str) -> str:
+    """
+    Load a Jira issue and its comments, convert them to a document format.
+
+    Args:
+        issue_key (str): Jira issue key (e.g., 'PROJ-123')
+
+    Returns:
+        str: Status message
+    """
+    global vector_store, jira_client
+
+    if not jira_client:
+        return "Please connect to Jira first"
+
+    try:
+        # Get the issue
+        issue = jira_client.issue(issue_key)
+        
+        # Combine issue fields into a single text
+        content = f"""
+        Title: {issue.fields.summary}
+        Description: {issue.fields.description or ''}
+        Status: {issue.fields.status}
+        Created: {issue.fields.created}
+        Reporter: {issue.fields.reporter}
+        """
+
+        # Add comments
+        comments = jira_client.comments(issue)
+        for comment in comments:
+            content += f"\nComment by {comment.author} on {comment.created}:\n{comment.body}\n"
+
+        # Create a document
+        documents = [Document(page_content=content, metadata={"source": f"JIRA-{issue_key}"})]
+        
+        # Split the document into chunks
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        chunks = text_splitter.split_documents(documents)
+
+        # Create or update the vector store
+        if vector_store is None:
+            vector_store = Chroma.from_documents(
+                documents=chunks,
+                embedding=embedding
+            )
+        else:
+            vector_store.add_documents(chunks)
+
+        return f"Successfully loaded Jira issue {issue_key}"
+    except Exception as e:
+        return f"Error loading Jira issue: {str(e)}"
 
 
 def respond(message: str, history: list) -> str:
@@ -123,39 +202,54 @@ def clear_state():
 with gr.Blocks(
     theme=gr.themes.Default(
         primary_hue="blue",
-        secondary_hue="gray",
+        secondary_hue="neutral",
     ),
+    title="Document Q&A",
 ) as demo:
-    gr.Markdown("# RAG Starter App")
-    with gr.Row():
-        with gr.Column(scale=1):
-            file_input = gr.File(
-                file_count="single", type="filepath", label="Upload PDF or Word Document"
-            )
-            with gr.Row():
-                submit_btn = gr.Button("Submit", variant="primary")
-                clear_btn = gr.Button("Clear")
+    gr.Markdown("# Document Q&A")
+    
+    with gr.Tab("Document Upload"):
+        with gr.Row():
+            with gr.Column(scale=1):
+                file_input = gr.File(
+                    file_count="single", type="filepath", label="Upload PDF or Word Document"
+                )
+                with gr.Row():
+                    submit_btn = gr.Button("Submit", variant="primary")
+                    clear_btn = gr.Button("Clear", variant="secondary")
+            with gr.Column(scale=3):
+                chatbot = gr.ChatInterface(
+                    fn=respond,
+                    chatbot=gr.Chatbot(height=800),
+                    theme="soft",
+                    show_progress="full",
+                    textbox=gr.Textbox(
+                        placeholder="Ask a question about the document...",
+                        container=False,
+                        scale=7,
+                    ),
+                )
+    
+    with gr.Tab("Jira Connection"):
+        with gr.Row():
+            with gr.Column():
+                jira_server = gr.Textbox(label="Jira Server URL", placeholder="https://your-domain.atlassian.net")
+                jira_username = gr.Textbox(label="Username/Email")
+                jira_token = gr.Textbox(label="API Token", type="password")
+                connect_btn = gr.Button("Connect to Jira")
+                jira_status = gr.Textbox(label="Connection Status", interactive=False)
+        
+        with gr.Row():
+            with gr.Column():
+                issue_key = gr.Textbox(label="Jira Issue Key", placeholder="e.g., PROJ-123")
+                load_issue_btn = gr.Button("Load Issue")
+                issue_status = gr.Textbox(label="Loading Status", interactive=False)
 
-            status_output = gr.Textbox(label="Status")
-
-        with gr.Column(scale=3):
-            chatbot = gr.ChatInterface(
-                fn=respond,
-                chatbot=gr.Chatbot(height=800),
-                theme="soft",
-                show_progress="full",
-                textbox=gr.Textbox(
-                    placeholder="Ask questions about the uploaded document!",
-                    container=False,
-                ),
-            )
-
-    # Set up Gradio interactions
-    submit_btn.click(fn=load_files, inputs=file_input, outputs=status_output)
-    clear_btn.click(
-        fn=clear_state,
-        outputs=[file_input, status_output],
-    )
+    # Event handlers
+    submit_btn.click(load_files, inputs=[file_input], outputs=[chatbot])
+    clear_btn.click(clear_state, outputs=[file_input, chatbot])
+    connect_btn.click(init_jira, inputs=[jira_server, jira_username, jira_token], outputs=[jira_status])
+    load_issue_btn.click(load_jira_issue, inputs=[issue_key], outputs=[issue_status])
 
 if __name__ == "__main__":
     demo.launch()
