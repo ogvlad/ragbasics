@@ -2,15 +2,12 @@ import logging
 import os
 
 import gradio as gr
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_chroma import Chroma
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import ChatOpenAI
 from toml import load
 
-from loaders import PDFDocumentLoader, WordDocumentLoader, JiraLoader
+from core import DocumentManager
 
 # Configure logging
 logging.basicConfig(
@@ -29,126 +26,14 @@ JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN", "")
 with open("pyproject.toml", "r") as f:
     config = load(f)
 
-# Global objects
-vector_store = None
-jira_loader = None
-
-# Initialize language model and embeddings
+# Initialize core components
+document_manager = DocumentManager()
 llm = ChatOpenAI(model="gpt-4o-mini")
-embedding = OpenAIEmbeddings()
-
-def load_files(file_path: str) -> str:
-    """
-    Load a PDF or Word document from the given file path, split it into chunks,
-    and store these chunks in a global vector store (Chroma).
-
-    Args:
-        file_path (str): The path to the PDF or Word document.
-
-    Returns:
-        str: A status message indicating the file was loaded successfully.
-    """
-    global vector_store
-
-    logger.info(f"Loading file: {file_path}")
-
-    # Determine file type and use appropriate loader
-    file_extension = os.path.splitext(file_path)[1].lower()
-    
-    if file_extension == '.pdf':
-        loader = PDFDocumentLoader()
-    elif file_extension in ['.docx', '.doc']:
-        loader = WordDocumentLoader()
-    else:
-        return f"Unsupported file type: {file_extension}. Please upload a PDF or Word document."
-
-    try:
-        # Load the document
-        documents = loader.load(file_path)
-        logger.info(f"Loaded {len(documents)} document(s)")
-
-        # Split the document into chunks
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        chunks = text_splitter.split_documents(documents)
-
-        # Create or update the vector store
-        if vector_store is None:
-            vector_store = Chroma.from_documents(
-                documents=chunks,
-                embedding=embedding
-            )
-        else:
-            vector_store.add_documents(chunks)
-
-        return "File loaded successfully. You can now ask questions about the document."
-    except Exception as e:
-        logger.error(f"Error loading file: {str(e)}")
-        return f"Error loading file: {str(e)}"
-
-
-def init_jira(server: str, username: str, api_token: str) -> str:
-    """
-    Initialize Jira client with the provided credentials.
-
-    Args:
-        server (str): Jira server URL
-        username (str): Jira username (email)
-        api_token (str): Jira API token
-
-    Returns:
-        str: Status message
-    """
-    global jira_loader
-    try:
-        jira_loader = JiraLoader(server, username, api_token)
-        return "Successfully connected to Jira"
-    except Exception as e:
-        logger.error(f"Failed to connect to Jira: {str(e)}")
-        return f"Failed to connect to Jira: {str(e)}"
-
-
-def load_jira_issue(issue_key: str) -> str:
-    """
-    Load a Jira issue and its comments, convert them to a document format.
-
-    Args:
-        issue_key (str): Jira issue key (e.g., 'PROJ-123')
-
-    Returns:
-        str: Status message
-    """
-    global vector_store, jira_loader
-
-    if not jira_loader:
-        return "Please connect to Jira first"
-
-    try:
-        # Load the issue using JiraLoader
-        documents = jira_loader.load(issue_key)
-        
-        # Split the document into chunks
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        chunks = text_splitter.split_documents(documents)
-
-        # Create or update the vector store
-        if vector_store is None:
-            vector_store = Chroma.from_documents(
-                documents=chunks,
-                embedding=embedding
-            )
-        else:
-            vector_store.add_documents(chunks)
-
-        return f"Successfully loaded Jira issue {issue_key}"
-    except Exception as e:
-        logger.error(f"Error loading Jira issue: {str(e)}")
-        return f"Error loading Jira issue: {str(e)}"
-
 
 def respond(message: str, history: list) -> str:
     """
     Generate a response based on the user query (message),
-    retrieving relevant context from the global vector store.
+    retrieving relevant context from the document store.
 
     Args:
         message (str): The user's query or message.
@@ -157,11 +42,10 @@ def respond(message: str, history: list) -> str:
     Returns:
         str: The generated response.
     """
-    if vector_store is None:
-        return "Please load a document or Jira issue first."
-
     # Search for relevant documents
-    docs = vector_store.similarity_search(message)
+    docs = document_manager.search_documents(message)
+    if not docs:
+        return "Please load a document or Jira issue first."
 
     # Create a prompt template
     template = """Answer the question based on the following context:
@@ -191,19 +75,6 @@ def respond(message: str, history: list) -> str:
             "question": message,
         }
     )
-
-
-def clear_state() -> list:
-    """
-    Clear the global vector store reference and reset the UI fields.
-
-    Returns:
-        list: A list of values for resetting Gradio components.
-    """
-    global vector_store
-    vector_store = None
-    return [None, "State cleared. Ready for new documents."]  # Reset file input and status textbox
-
 
 # Gradio UI Setup
 with gr.Blocks(
@@ -260,10 +131,10 @@ with gr.Blocks(
                 issue_status = gr.Textbox(label="Loading Status", interactive=False)
 
     # Event handlers
-    submit_btn.click(load_files, inputs=[file_input], outputs=[status_output])
-    clear_btn.click(clear_state, outputs=[file_input, status_output])
-    connect_btn.click(init_jira, inputs=[jira_server, jira_username, jira_token], outputs=[jira_status])
-    load_issue_btn.click(load_jira_issue, inputs=[issue_key], outputs=[issue_status])
+    submit_btn.click(document_manager.load_file, inputs=[file_input], outputs=[status_output])
+    clear_btn.click(document_manager.clear_state, outputs=[file_input, status_output])
+    connect_btn.click(document_manager.init_jira, inputs=[jira_server, jira_username, jira_token], outputs=[jira_status])
+    load_issue_btn.click(document_manager.load_jira_issue, inputs=[issue_key], outputs=[issue_status])
 
 
 if __name__ == "__main__":
