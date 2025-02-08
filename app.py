@@ -35,6 +35,10 @@ jira_client = None
 llm = ChatOpenAI(model="gpt-4o-mini")
 embedding = OpenAIEmbeddings()
 
+# Default Jira settings
+DEFAULT_JIRA_URL = "https://eassessment.atlassian.net"
+DEFAULT_JIRA_USER = "vlad.ogay@cirrusassessment.com"
+JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN", "")
 
 def load_files(file_path: str) -> str:
     """
@@ -233,9 +237,15 @@ with gr.Blocks(
     with gr.Tab("Jira Connection"):
         with gr.Row():
             with gr.Column():
-                jira_server = gr.Textbox(label="Jira Server URL", placeholder="https://your-domain.atlassian.net")
-                jira_username = gr.Textbox(label="Username/Email")
-                jira_token = gr.Textbox(label="API Token", type="password")
+                jira_server = gr.Textbox(label="Jira Server URL", 
+                                       placeholder="https://your-domain.atlassian.net",
+                                       value=DEFAULT_JIRA_URL)
+                jira_username = gr.Textbox(label="Username/Email",
+                                         value=DEFAULT_JIRA_USER)
+                jira_token = gr.Textbox(label="API Token", 
+                                      type="password",
+                                      value=JIRA_API_TOKEN,
+                                      placeholder="Enter token or set JIRA_API_TOKEN environment variable")
                 connect_btn = gr.Button("Connect to Jira")
                 jira_status = gr.Textbox(label="Connection Status", interactive=False)
         
