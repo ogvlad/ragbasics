@@ -5,3 +5,5 @@ langchain-chroma>=0.1.2
 pypdf
 langchain-text-splitters
 toml
+python-docx
+docx2txt

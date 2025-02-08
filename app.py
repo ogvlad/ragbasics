@@ -5,7 +5,7 @@ import gradio as gr
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 from langchain_chroma import Chroma
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
@@ -36,11 +36,11 @@ embedding = OpenAIEmbeddings()
 
 def load_files(file_path: str) -> str:
     """
-    Load a PDF file from the given file path, split it into chunks,
+    Load a PDF or Word document from the given file path, split it into chunks,
     and store these chunks in a global vector store (Chroma).
 
     Args:
-        file_path (str): The path to the PDF file.
+        file_path (str): The path to the PDF or Word document.
 
     Returns:
         str: A status message indicating the file was loaded successfully.
@@ -49,9 +49,18 @@ def load_files(file_path: str) -> str:
 
     logger.info(f"Loading file: {file_path}")
 
+    # Determine file type and use appropriate loader
+    file_extension = os.path.splitext(file_path)[1].lower()
+    
+    if file_extension == '.pdf':
+        loader = PyPDFLoader(file_path)
+    elif file_extension in ['.docx', '.doc']:
+        loader = Docx2txtLoader(file_path)
+    else:
+        return f"Unsupported file type: {file_extension}. Please upload a PDF or Word document."
+
     # Load the document
-    document_loader = PyPDFLoader(file_path)
-    documents = document_loader.load()
+    documents = loader.load()
     logger.info(f"Loaded {len(documents)} document(s)")
 
     # Split the document into chunks
@@ -121,7 +130,7 @@ with gr.Blocks(
     with gr.Row():
         with gr.Column(scale=1):
             file_input = gr.File(
-                file_count="single", type="filepath", label="Upload PDF Document"
+                file_count="single", type="filepath", label="Upload PDF or Word Document"
             )
             with gr.Row():
                 submit_btn = gr.Button("Submit", variant="primary")
@@ -132,7 +141,7 @@ with gr.Blocks(
         with gr.Column(scale=3):
             chatbot = gr.ChatInterface(
                 fn=respond,
-                chatbot=gr.Chatbot(height=300),
+                chatbot=gr.Chatbot(height=800),
                 theme="soft",
                 show_progress="full",
                 textbox=gr.Textbox(
